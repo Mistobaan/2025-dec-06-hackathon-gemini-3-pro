@@ -103,7 +103,7 @@ export function EditorCanvas({
         Object.defineProperty(TransformCtor.prototype, "constructor", { value: TransformCtor });
 
         const transformPrototype = TransformCtor.prototype as unknown as THREE.Object3D;
-        transformPrototype.isObject3D = true;
+        Object.defineProperty(transformPrototype, "isObject3D", { value: true });
       }
 
       controlConstructors.current = { OrbitControls: OrbitCtor, TransformControls: TransformCtor };
