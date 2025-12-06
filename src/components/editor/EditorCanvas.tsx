@@ -6,10 +6,10 @@ import {
   EditorCameraPreset,
   EditorCameraType,
   EditorTransformMode,
-} from "@/lib/editor/types";
+} from "@/lib/scene/types";
 import { editorCommands } from "@/lib/editor/commands";
 
-import type { EditorObject } from "@/lib/editor/types";
+import type { EditorObject } from "@/lib/scene/types";
 
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { TransformControls } from "three/examples/jsm/controls/TransformControls.js";

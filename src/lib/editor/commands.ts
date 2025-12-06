@@ -1,4 +1,4 @@
-import { EditorCameraType, EditorTransformMode, EditorCameraPreset } from "./types";
+import { EditorCameraType, EditorTransformMode, EditorCameraPreset } from "../scene/types";
 
 export type EditorCommandHandler = {
   setCameraType: (type: EditorCameraType) => void;
