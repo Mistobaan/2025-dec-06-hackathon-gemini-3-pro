@@ -58,6 +58,10 @@ export function EditorCanvas({
     if (!mount) return;
 
     const scene = graph.scene;
+    if (!scene) {
+      console.error("EditorCanvas: no scene provided to graph");
+      return;
+    }
     let orbit: OrbitControls | null = null;
     let transform: TransformControls | null = null;
     let renderer: THREE.WebGLRenderer | null = null;
@@ -252,7 +256,7 @@ export function EditorCanvas({
       }
       if (transformRef.current) {
         const transformObject = transformRef.current as unknown as THREE.Object3D;
-        if (transformObject.parent === scene) {
+        if (scene && transformObject.parent === scene) {
           scene.remove(transformObject);
         }
       }
