@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import {
   EditorCameraPreset,
   EditorCameraType,
   EditorTransformMode,
 } from "@/lib/editor/types";
 import { editorCommands } from "@/lib/editor/commands";
+
+import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import type { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
 const presets: Record<EditorCameraPreset, THREE.Vector3> = {
   home: new THREE.Vector3(6, 4, 6),
@@ -58,6 +59,13 @@ export function EditorCanvas() {
   const activeCameraRef = useRef<THREE.Camera | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
+  const controlConstructors = useRef<{
+    OrbitControls: typeof import("three/examples/jsm/controls/OrbitControls.js")["OrbitControls"] | null;
+    TransformControls: typeof import("three/examples/jsm/controls/TransformControls.js")["TransformControls"] | null;
+  }>({
+    OrbitControls: null,
+    TransformControls: null,
+  });
   const objects = useMemo(() => buildSampleObjects(), []);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -67,139 +75,169 @@ export function EditorCanvas() {
     const mount = mountRef.current;
     if (!mount) return;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(mount.clientWidth, mount.clientHeight);
-    renderer.shadowMap.enabled = true;
-    mount.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
+    let orbit: OrbitControls | null = null;
+    let transform: TransformControls | null = null;
+    let renderer: THREE.WebGLRenderer | null = null;
+    let scene: THREE.Scene | null = null;
+    let cancelled = false;
+    const cleanupListeners: Array<() => void> = [];
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf5f5f5);
-    const perspectiveCamera = new THREE.PerspectiveCamera(
-      60,
-      mount.clientWidth / mount.clientHeight,
-      0.1,
-      1000
-    );
-    perspectiveCamera.position.copy(presets.home);
-    perspectiveCamera.lookAt(0, 1, 0);
-    perspectiveCameraRef.current = perspectiveCamera;
+    (async () => {
+      const [{ OrbitControls }, { TransformControls }] = await Promise.all([
+        import("three/examples/jsm/controls/OrbitControls.js"),
+        import("three/examples/jsm/controls/TransformControls.js"),
+      ]);
 
-    const aspect = mount.clientWidth / mount.clientHeight;
-    const frustumSize = 16;
-    const orthographicCamera = new THREE.OrthographicCamera(
-      (frustumSize * aspect) / -2,
-      (frustumSize * aspect) / 2,
-      frustumSize / 2,
-      frustumSize / -2,
-      -50,
-      200
-    );
-    orthographicCamera.position.copy(presets.home);
-    orthographicCamera.lookAt(0, 1, 0);
-    orthographicCameraRef.current = orthographicCamera;
+      if (cancelled) return;
 
-    activeCameraRef.current = perspectiveCamera;
+      controlConstructors.current = { OrbitControls, TransformControls };
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambient);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      renderer.shadowMap.enabled = true;
+      mount.appendChild(renderer.domElement);
+      rendererRef.current = renderer;
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    keyLight.position.set(4, 8, 6);
-    keyLight.castShadow = true;
-    scene.add(keyLight);
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xf5f5f5);
+      const perspectiveCamera = new THREE.PerspectiveCamera(
+        60,
+        mount.clientWidth / mount.clientHeight,
+        0.1,
+        1000
+      );
+      perspectiveCamera.position.copy(presets.home);
+      perspectiveCamera.lookAt(0, 1, 0);
+      perspectiveCameraRef.current = perspectiveCamera;
 
-    const grid = new THREE.GridHelper(40, 40, 0xd4d4d8, 0xe4e4e7);
-    (grid.material as THREE.Material).transparent = true;
-    scene.add(grid);
+      const aspect = mount.clientWidth / mount.clientHeight;
+      const frustumSize = 16;
+      const orthographicCamera = new THREE.OrthographicCamera(
+        (frustumSize * aspect) / -2,
+        (frustumSize * aspect) / 2,
+        frustumSize / 2,
+        frustumSize / -2,
+        -50,
+        200
+      );
+      orthographicCamera.position.copy(presets.home);
+      orthographicCamera.lookAt(0, 1, 0);
+      orthographicCameraRef.current = orthographicCamera;
 
-    objects.forEach((entry) => {
-      entry.object3d.castShadow = true;
-      entry.object3d.receiveShadow = true;
-      scene.add(entry.object3d);
-    });
+      activeCameraRef.current = perspectiveCamera;
 
-    const orbit = new OrbitControls(perspectiveCamera, renderer.domElement);
-    orbit.enableDamping = true;
-    orbit.target.set(0, 1, 0);
-    orbitRef.current = orbit;
+      const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambient);
 
-    const transform = new TransformControls(perspectiveCamera, renderer.domElement);
-    transform.setMode("translate");
-    transform.addEventListener("mouseDown", () => {
-      if (orbitRef.current) orbitRef.current.enabled = false;
-    });
-    transform.addEventListener("mouseUp", () => {
-      if (orbitRef.current) orbitRef.current.enabled = true;
-    });
-    scene.add(transform);
-    transformRef.current = transform;
+      const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      keyLight.position.set(4, 8, 6);
+      keyLight.castShadow = true;
+      scene.add(keyLight);
 
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
+      const grid = new THREE.GridHelper(40, 40, 0xd4d4d8, 0xe4e4e7);
+      (grid.material as THREE.Material).transparent = true;
+      scene.add(grid);
 
-    const onPointerDown = (event: PointerEvent) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      objects.forEach((entry) => {
+        entry.object3d.castShadow = true;
+        entry.object3d.receiveShadow = true;
+        scene!.add(entry.object3d);
+      });
 
-      raycaster.setFromCamera(pointer, activeCameraRef.current!);
-      const hits = raycaster.intersectObjects(objects.map((o) => o.object3d));
-      if (hits.length) {
-        const hit = hits[0].object;
-        const found = objects.find((o) => o.object3d === hit || o.object3d.children.includes(hit));
-        if (found) {
-          setSelectedId(found.id);
-          transform.attach(found.object3d);
-        }
+      orbit = new OrbitControls(perspectiveCamera, renderer.domElement);
+      orbit.enableDamping = true;
+      orbit.target.set(0, 1, 0);
+      orbitRef.current = orbit;
+
+      transform = new TransformControls(perspectiveCamera, renderer.domElement);
+      transform.setMode("translate");
+      transform.addEventListener("mouseDown", () => {
+        if (orbitRef.current) orbitRef.current.enabled = false;
+      });
+      transform.addEventListener("mouseUp", () => {
+        if (orbitRef.current) orbitRef.current.enabled = true;
+      });
+
+      if (transform.isObject3D) {
+        scene.add(transform);
+        transformRef.current = transform;
       } else {
-        setSelectedId(null);
-        transform.detach();
-      }
-    };
-
-    const handleResize = () => {
-      const width = mount.clientWidth;
-      const height = mount.clientHeight;
-      renderer.setSize(width, height);
-
-      if (perspectiveCameraRef.current instanceof THREE.PerspectiveCamera) {
-        perspectiveCameraRef.current.aspect = width / height;
-        perspectiveCameraRef.current.updateProjectionMatrix();
+        console.error("TransformControls did not initialize as an Object3D", transform);
       }
 
-      const aspectRatio = width / height;
-      if (orthographicCameraRef.current instanceof THREE.OrthographicCamera) {
-        orthographicCameraRef.current.left = (-frustumSize * aspectRatio) / 2;
-        orthographicCameraRef.current.right = (frustumSize * aspectRatio) / 2;
-        orthographicCameraRef.current.top = frustumSize / 2;
-        orthographicCameraRef.current.bottom = -frustumSize / 2;
-        orthographicCameraRef.current.updateProjectionMatrix();
-      }
-    };
+      const raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
 
-    renderer.domElement.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("resize", handleResize);
+      const onPointerDown = (event: PointerEvent) => {
+        const rect = renderer!.domElement.getBoundingClientRect();
+        pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    const animate = () => {
-      requestAnimationFrame(animate);
-      if (orbitRef.current) {
-        orbitRef.current.update();
-      }
-      renderer.render(scene, activeCameraRef.current!);
-    };
+        raycaster.setFromCamera(pointer, activeCameraRef.current!);
+        const hits = raycaster.intersectObjects(objects.map((o) => o.object3d));
+        if (hits.length) {
+          const hit = hits[0].object;
+          const found = objects.find((o) => o.object3d === hit || o.object3d.children.includes(hit));
+          if (found && transformRef.current) {
+            setSelectedId(found.id);
+            transformRef.current.attach(found.object3d);
+          }
+        } else {
+          setSelectedId(null);
+          transformRef.current?.detach();
+        }
+      };
 
-    animate();
+      const handleResize = () => {
+        const width = mount.clientWidth;
+        const height = mount.clientHeight;
+        renderer!.setSize(width, height);
+
+        if (perspectiveCameraRef.current instanceof THREE.PerspectiveCamera) {
+          perspectiveCameraRef.current.aspect = width / height;
+          perspectiveCameraRef.current.updateProjectionMatrix();
+        }
+
+        const aspectRatio = width / height;
+        if (orthographicCameraRef.current instanceof THREE.OrthographicCamera) {
+          orthographicCameraRef.current.left = (-frustumSize * aspectRatio) / 2;
+          orthographicCameraRef.current.right = (frustumSize * aspectRatio) / 2;
+          orthographicCameraRef.current.top = frustumSize / 2;
+          orthographicCameraRef.current.bottom = -frustumSize / 2;
+          orthographicCameraRef.current.updateProjectionMatrix();
+        }
+      };
+
+      renderer.domElement.addEventListener("pointerdown", onPointerDown);
+      cleanupListeners.push(() => renderer?.domElement.removeEventListener("pointerdown", onPointerDown));
+
+      window.addEventListener("resize", handleResize);
+      cleanupListeners.push(() => window.removeEventListener("resize", handleResize));
+
+      const animate = () => {
+        if (cancelled) return;
+        requestAnimationFrame(animate);
+        if (orbitRef.current) {
+          orbitRef.current.update();
+        }
+        renderer!.render(scene!, activeCameraRef.current!);
+      };
+
+      animate();
+
+    })();
 
     return () => {
-      window.removeEventListener("resize", handleResize);
-      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-      transform.dispose();
-      orbit.dispose();
-      renderer.dispose();
-      mount.removeChild(renderer.domElement);
-      scene.clear();
+      cancelled = true;
+      cleanupListeners.forEach((fn) => fn());
+      orbitRef.current?.dispose();
+      transformRef.current?.dispose();
+      rendererRef.current?.dispose();
+      if (rendererRef.current && mount && rendererRef.current.domElement.parentElement === mount) {
+        mount.removeChild(rendererRef.current.domElement);
+      }
+      scene?.clear();
     };
   }, [objects]);
 
@@ -210,6 +248,9 @@ export function EditorCanvas() {
 
   const setActiveCamera = useCallback((type: EditorCameraType) => {
     if (!rendererRef.current) return;
+    const OrbitCtor = controlConstructors.current.OrbitControls;
+    if (!OrbitCtor) return;
+
     const renderer = rendererRef.current;
     const camera =
       type === "orthographic" ? orthographicCameraRef.current : perspectiveCameraRef.current;
@@ -221,7 +262,7 @@ export function EditorCanvas() {
       orbitRef.current.dispose();
     }
 
-    const orbit = new OrbitControls(camera, renderer.domElement);
+    const orbit = new OrbitCtor(camera, renderer.domElement);
     orbit.enableDamping = true;
     orbit.target.set(0, 1, 0);
     orbitRef.current = orbit;
@@ -270,44 +311,21 @@ export function EditorCanvas() {
   }, [clearSelection, handleSelectFromList, moveCameraToPreset, setActiveCamera, setTransformMode]);
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
-      <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
-        <div className="text-lg font-semibold text-zinc-900">Three.js Editor</div>
-        <p className="text-sm text-zinc-600">
-          Drive camera modes, presets, and transforms through the programmatic editorCommands API.
+    <div className="relative h-full w-full bg-zinc-50">
+      <div ref={mountRef} className="absolute inset-0" />
+      <div className="pointer-events-none absolute left-4 top-4 w-[320px] max-w-[80vw] space-y-3 rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
+        <div className="text-base font-semibold text-zinc-900">Three.js Editor</div>
+        <p className="leading-relaxed text-zinc-700">
+          Use the <code className="rounded bg-zinc-100 px-1">editorCommands</code> API to drive camera modes, presets,
+          transforms, and selection programmatically. The viewport supports orbit (left drag), pan (right drag), and
+          zoom (wheel or pinch).
         </p>
       </div>
-
-      <div className="flex flex-1 gap-4 overflow-hidden">
-        <div className="flex-1 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 shadow-inner">
-          <div ref={mountRef} className="h-full w-full" />
+      {selectedId && (
+        <div className="pointer-events-none absolute right-4 top-4 rounded-full bg-black/70 px-4 py-2 text-xs font-medium uppercase tracking-wide text-white shadow-lg">
+          Selected: {objects.find((o) => o.id === selectedId)?.name ?? selectedId}
         </div>
-        <aside className="w-72 space-y-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-semibold text-zinc-900">Scene Overview</div>
-          <ul className="space-y-2 text-sm text-zinc-700">
-            {objects.map((entry) => (
-              <li
-                key={entry.id}
-                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
-                  selectedId === entry.id ? "border-black bg-zinc-100" : "border-zinc-200"
-                }`}
-              >
-                <span>{entry.name}</span>
-                {selectedId === entry.id && <span className="text-xs uppercase text-zinc-500">Selected</span>}
-              </li>
-            ))}
-          </ul>
-          <div className="rounded-lg bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600">
-            <p className="font-semibold text-zinc-800">Navigation</p>
-            <ul className="list-disc space-y-1 pl-4 pt-1">
-              <li>Orbit: left mouse drag</li>
-              <li>Pan: right mouse drag</li>
-              <li>Zoom: mouse wheel or pinch</li>
-            </ul>
-            <p className="pt-2 text-zinc-700">Use programmatic commands to change cameras, transforms, and presets.</p>
-          </div>
-        </aside>
-      </div>
+      )}
     </div>
   );
 }
