@@ -83,14 +83,35 @@ export function EditorCanvas() {
     const cleanupListeners: Array<() => void> = [];
 
     (async () => {
-      const [{ OrbitControls }, { TransformControls }] = await Promise.all([
+      const [orbitModule, transformModule] = await Promise.all([
         import("three/examples/jsm/controls/OrbitControls.js"),
         import("three/examples/jsm/controls/TransformControls.js"),
       ]);
 
       if (cancelled) return;
 
-      controlConstructors.current = { OrbitControls, TransformControls };
+      const OrbitCtor =
+        orbitModule.OrbitControls ?? (orbitModule as { default?: typeof OrbitControls }).default ?? null;
+      const TransformCtor =
+        transformModule.TransformControls ??
+        (transformModule as { default?: typeof TransformControls }).default ??
+        null;
+
+      if (!OrbitCtor || !TransformCtor) {
+        console.error("Failed to load three.js control constructors", {
+          OrbitCtorLoaded: Boolean(OrbitCtor),
+          TransformCtorLoaded: Boolean(TransformCtor),
+        });
+        return;
+      }
+
+      if (!(TransformCtor.prototype instanceof THREE.Object3D)) {
+        Object.setPrototypeOf(TransformCtor.prototype, THREE.Object3D.prototype);
+        Object.defineProperty(TransformCtor.prototype, "constructor", { value: TransformCtor });
+        (TransformCtor.prototype as THREE.Object3D).isObject3D = true;
+      }
+
+      controlConstructors.current = { OrbitControls: OrbitCtor, TransformControls: TransformCtor };
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(window.devicePixelRatio);
@@ -145,12 +166,12 @@ export function EditorCanvas() {
         scene!.add(entry.object3d);
       });
 
-      orbit = new OrbitControls(perspectiveCamera, renderer.domElement);
+      orbit = new OrbitCtor(perspectiveCamera, renderer.domElement);
       orbit.enableDamping = true;
       orbit.target.set(0, 1, 0);
       orbitRef.current = orbit;
 
-      transform = new TransformControls(perspectiveCamera, renderer.domElement);
+      transform = new TransformCtor(perspectiveCamera, renderer.domElement);
       transform.setMode("translate");
       transform.addEventListener("mouseDown", () => {
         if (orbitRef.current) orbitRef.current.enabled = false;
