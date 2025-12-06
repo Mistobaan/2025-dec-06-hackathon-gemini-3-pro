@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { EditorObject } from "./types";
+import { EditorObject } from "@/lib/editor/types";
 
 const defaultCameraPosition = new THREE.Vector3(6, 4, 6);
 const frustumSize = 16;

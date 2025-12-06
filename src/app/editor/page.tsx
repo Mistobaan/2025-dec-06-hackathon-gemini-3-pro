@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import dynamic from "next/dynamic";
-import { createSampleScene } from "@/lib/editor/sampleScene";
+import { createSampleScene } from "@/lib/scenes/sampleScene";
 
 const EditorCanvas = dynamic(() => import("@/components/editor/EditorCanvas"), {
   ssr: false,
