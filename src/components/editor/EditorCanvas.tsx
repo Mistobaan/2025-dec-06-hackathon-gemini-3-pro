@@ -9,6 +9,8 @@ import {
 } from "@/lib/editor/types";
 import { editorCommands } from "@/lib/editor/commands";
 
+import type { EditorObject } from "@/lib/editor/types";
+
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
@@ -19,39 +21,19 @@ const presets: Record<EditorCameraPreset, THREE.Vector3> = {
   top: new THREE.Vector3(0, 10, 0),
 };
 
-type EditorObject = {
-  id: string;
-  name: string;
-  object3d: THREE.Object3D;
+type EditorCanvasProps = {
+  scene: THREE.Scene;
+  perspectiveCamera?: THREE.PerspectiveCamera | null;
+  orthographicCamera?: THREE.OrthographicCamera | null;
+  selectableObjects?: EditorObject[];
 };
 
-function buildSampleObjects(): EditorObject[] {
-  const box = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5, 1.5, 1.5),
-    new THREE.MeshStandardMaterial({ color: 0x6c8ffc })
-  );
-  box.position.set(-2, 0.75, 0);
-
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 32, 32),
-    new THREE.MeshStandardMaterial({ color: 0xf59e0b })
-  );
-  sphere.position.set(2, 1, 0);
-
-  const plane = new THREE.Mesh(
-    new THREE.PlaneGeometry(20, 20),
-    new THREE.MeshStandardMaterial({ color: 0xf8fafc, side: THREE.DoubleSide })
-  );
-  plane.rotation.x = -Math.PI / 2;
-
-  return [
-    { id: "box", name: "Box", object3d: box },
-    { id: "sphere", name: "Sphere", object3d: sphere },
-    { id: "ground", name: "Ground", object3d: plane },
-  ];
-}
-
-export function EditorCanvas() {
+export function EditorCanvas({
+  scene,
+  perspectiveCamera,
+  orthographicCamera,
+  selectableObjects,
+}: EditorCanvasProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const perspectiveCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -66,7 +48,19 @@ export function EditorCanvas() {
     OrbitControls: null,
     TransformControls: null,
   });
-  const objects = useMemo(() => buildSampleObjects(), []);
+  const objects = useMemo<EditorObject[]>(() => {
+    if (selectableObjects?.length) return selectableObjects;
+
+    const gathered: EditorObject[] = [];
+    scene.traverse((child) => {
+      if (child.type === "TransformControls" || child.type === "OrbitControls") return;
+      if (child instanceof THREE.Camera) return;
+      if (child === scene) return;
+      const id = child.uuid;
+      gathered.push({ id, name: child.name || child.type, object3d: child });
+    });
+    return gathered;
+  }, [scene, selectableObjects]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<EditorTransformMode>("translate");
@@ -78,7 +72,6 @@ export function EditorCanvas() {
     let orbit: OrbitControls | null = null;
     let transform: TransformControls | null = null;
     let renderer: THREE.WebGLRenderer | null = null;
-    let scene: THREE.Scene | null = null;
     let cancelled = false;
     const cleanupListeners: Array<() => void> = [];
 
@@ -120,58 +113,45 @@ export function EditorCanvas() {
       mount.appendChild(renderer.domElement);
       rendererRef.current = renderer;
 
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf5f5f5);
-      const perspectiveCamera = new THREE.PerspectiveCamera(
-        60,
-        mount.clientWidth / mount.clientHeight,
-        0.1,
-        1000
-      );
-      perspectiveCamera.position.copy(presets.home);
-      perspectiveCamera.lookAt(0, 1, 0);
-      perspectiveCameraRef.current = perspectiveCamera;
+      perspectiveCameraRef.current =
+        perspectiveCamera ??
+        scene.children.find((child): child is THREE.PerspectiveCamera => child instanceof THREE.PerspectiveCamera) ??
+        (() => {
+          const fallback = new THREE.PerspectiveCamera(60, mount.clientWidth / mount.clientHeight, 0.1, 1000);
+          fallback.position.copy(presets.home);
+          fallback.lookAt(0, 1, 0);
+          scene.add(fallback);
+          return fallback;
+        })();
 
       const aspect = mount.clientWidth / mount.clientHeight;
       const frustumSize = 16;
-      const orthographicCamera = new THREE.OrthographicCamera(
-        (frustumSize * aspect) / -2,
-        (frustumSize * aspect) / 2,
-        frustumSize / 2,
-        frustumSize / -2,
-        -50,
-        200
-      );
-      orthographicCamera.position.copy(presets.home);
-      orthographicCamera.lookAt(0, 1, 0);
-      orthographicCameraRef.current = orthographicCamera;
+      orthographicCameraRef.current =
+        orthographicCamera ??
+        scene.children.find((child): child is THREE.OrthographicCamera => child instanceof THREE.OrthographicCamera) ??
+        (() => {
+          const fallback = new THREE.OrthographicCamera(
+            (frustumSize * aspect) / -2,
+            (frustumSize * aspect) / 2,
+            frustumSize / 2,
+            frustumSize / -2,
+            -50,
+            200
+          );
+          fallback.position.copy(presets.home);
+          fallback.lookAt(0, 1, 0);
+          scene.add(fallback);
+          return fallback;
+        })();
 
-      activeCameraRef.current = perspectiveCamera;
+      activeCameraRef.current = perspectiveCameraRef.current;
 
-      const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-      scene.add(ambient);
-
-      const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      keyLight.position.set(4, 8, 6);
-      keyLight.castShadow = true;
-      scene.add(keyLight);
-
-      const grid = new THREE.GridHelper(40, 40, 0xd4d4d8, 0xe4e4e7);
-      (grid.material as THREE.Material).transparent = true;
-      scene.add(grid);
-
-      objects.forEach((entry) => {
-        entry.object3d.castShadow = true;
-        entry.object3d.receiveShadow = true;
-        scene!.add(entry.object3d);
-      });
-
-      orbit = new OrbitCtor(perspectiveCamera, renderer.domElement);
+      orbit = new OrbitCtor(activeCameraRef.current!, renderer.domElement);
       orbit.enableDamping = true;
       orbit.target.set(0, 1, 0);
       orbitRef.current = orbit;
 
-      transform = new TransformCtor(perspectiveCamera, renderer.domElement);
+      transform = new TransformCtor(activeCameraRef.current!, renderer.domElement);
       transform.setMode("translate");
       transform.addEventListener("mouseDown", () => {
         if (orbitRef.current) orbitRef.current.enabled = false;
@@ -242,7 +222,7 @@ export function EditorCanvas() {
         if (orbitRef.current) {
           orbitRef.current.update();
         }
-        renderer!.render(scene!, activeCameraRef.current!);
+        renderer!.render(scene, activeCameraRef.current!);
       };
 
       animate();
@@ -258,9 +238,11 @@ export function EditorCanvas() {
       if (rendererRef.current && mount && rendererRef.current.domElement.parentElement === mount) {
         mount.removeChild(rendererRef.current.domElement);
       }
-      scene?.clear();
+      if (transformRef.current && transformRef.current.parent === scene) {
+        scene.remove(transformRef.current);
+      }
     };
-  }, [objects]);
+  }, [objects, orthographicCamera, perspectiveCamera, scene]);
 
   useEffect(() => {
     if (!transformRef.current) return;

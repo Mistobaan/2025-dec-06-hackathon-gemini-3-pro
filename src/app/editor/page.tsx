@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import dynamic from "next/dynamic";
+import { createSampleScene } from "@/lib/editor/sampleScene";
 
 const EditorCanvas = dynamic(() => import("@/components/editor/EditorCanvas"), {
   ssr: false,
@@ -12,9 +14,16 @@ const EditorCanvas = dynamic(() => import("@/components/editor/EditorCanvas"), {
 });
 
 export default function EditorPage() {
+  const sample = useMemo(() => createSampleScene(), []);
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-zinc-100">
-      <EditorCanvas />
+      <EditorCanvas
+        scene={sample.scene}
+        perspectiveCamera={sample.perspectiveCamera}
+        orthographicCamera={sample.orthographicCamera}
+        selectableObjects={sample.selectableObjects}
+      />
     </div>
   );
 }
