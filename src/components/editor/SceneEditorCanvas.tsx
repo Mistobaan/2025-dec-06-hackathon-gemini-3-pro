@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { EditorCameraPreset, EditorTransformMode, SceneGraph, SceneObject } from "@/lib/scene/types";
 import { editorCommands } from "@/lib/editor/commands";
+import { SceneEditorEvent, sceneEditorEvents } from "@/lib/editor/events";
 
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
@@ -15,22 +16,26 @@ const presets: Record<EditorCameraPreset, THREE.Vector3> = {
   top: new THREE.Vector3(0, 10, 0),
 };
 
-type EditorCanvasProps = {
-  graph: SceneGraph;
+type SceneEditorCanvasProps = {
+  scene?: SceneGraph | null;
   defaultCameraTag?: string;
   selectableObjects?: SceneObject[];
+  onEvent?: (event: SceneEditorEvent) => void;
 };
 
-export function EditorCanvas({
-  graph,
+export function SceneEditorCanvas({
+  scene,
   defaultCameraTag,
   selectableObjects,
-}: EditorCanvasProps) {
+  onEvent,
+}: SceneEditorCanvasProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const perspectiveCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const orthographicCameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const activeCameraRef = useRef<THREE.Camera | null>(null);
+  const selectedRef = useRef<SceneObject | null>(null);
+  const transformModeRef = useRef<EditorTransformMode>("translate");
   const orbitRef = useRef<OrbitControls | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
   const controlConstructors = useRef<{
@@ -40,26 +45,37 @@ export function EditorCanvas({
     OrbitControls: null,
     TransformControls: null,
   });
+  const sceneGraph = scene ?? null;
+
   const objects = useMemo<SceneObject[]>(() => {
+    if (!sceneGraph?.objects) return [];
     if (selectableObjects?.length) return selectableObjects;
 
-    return graph.objects.filter((child) => {
+    return sceneGraph.objects.filter((child) => {
       if (child.object3d.type === "TransformControls" || child.object3d.type === "OrbitControls") return false;
       if (child.object3d instanceof THREE.Camera) return false;
       return true;
     });
-  }, [graph.objects, selectableObjects]);
+  }, [sceneGraph, selectableObjects]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<EditorTransformMode>("translate");
+
+  const emitEvent = useCallback(
+    (event: SceneEditorEvent) => {
+      sceneEditorEvents.emit(event);
+      onEvent?.(event);
+    },
+    [onEvent]
+  );
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
 
-    const scene = graph.scene;
-    if (!scene) {
-      console.error("EditorCanvas: no scene provided to graph");
+    const graphScene = sceneGraph?.scene;
+    if (!graphScene) {
+      console.error("SceneEditorCanvas: no scene provided");
       return;
     }
     let orbit: OrbitControls | null = null;
@@ -111,9 +127,10 @@ export function EditorCanvas({
       const frustumSize = 16;
 
       const perspectiveCamera =
-        graph.getByTag("camera:perspective").find((c) => c.object3d instanceof THREE.PerspectiveCamera)?.
-          object3d ??
-        graph.objects.find((child) => child.object3d instanceof THREE.PerspectiveCamera)?.object3d;
+        sceneGraph
+          ?.getByTag("camera:perspective")
+          .find((c) => c.object3d instanceof THREE.PerspectiveCamera)?.object3d ??
+        sceneGraph?.objects.find((child) => child.object3d instanceof THREE.PerspectiveCamera)?.object3d;
 
       if (perspectiveCamera && perspectiveCamera instanceof THREE.PerspectiveCamera) {
         perspectiveCameraRef.current = perspectiveCamera;
@@ -122,16 +139,16 @@ export function EditorCanvas({
           const fallback = new THREE.PerspectiveCamera(60, mount.clientWidth / mount.clientHeight, 0.1, 1000);
           fallback.position.copy(presets.home);
           fallback.lookAt(0, 1, 0);
-          graph.scene.add(fallback);
+          graphScene.add(fallback);
           return fallback;
         })();
       }
 
       const orthographicCamera =
-        graph
-          .getByTag("camera:orthographic")
+        sceneGraph
+          ?.getByTag("camera:orthographic")
           .find((c) => c.object3d instanceof THREE.OrthographicCamera)?.object3d ??
-        graph.objects.find((child) => child.object3d instanceof THREE.OrthographicCamera)?.object3d;
+        sceneGraph?.objects.find((child) => child.object3d instanceof THREE.OrthographicCamera)?.object3d;
 
       if (orthographicCamera && orthographicCamera instanceof THREE.OrthographicCamera) {
         orthographicCameraRef.current = orthographicCamera;
@@ -148,12 +165,12 @@ export function EditorCanvas({
           );
           fallback.position.copy(presets.home);
           fallback.lookAt(0, 1, 0);
-          graph.scene.add(fallback);
+          graphScene.add(fallback);
           return fallback;
         })();
       }
 
-      const taggedDefault = defaultCameraTag ? graph.getFirstByTag(defaultCameraTag)?.object3d : null;
+      const taggedDefault = defaultCameraTag ? sceneGraph?.getFirstByTag(defaultCameraTag)?.object3d : null;
       const defaultCamera = taggedDefault instanceof THREE.Camera ? taggedDefault : perspectiveCameraRef.current;
 
       activeCameraRef.current = defaultCamera ?? perspectiveCameraRef.current;
@@ -167,9 +184,14 @@ export function EditorCanvas({
       transform.setMode("translate");
       transform.addEventListener("mouseDown", () => {
         if (orbitRef.current) orbitRef.current.enabled = false;
+        emitEvent({ type: "transform-start", object: selectedRef.current, mode: transformModeRef.current });
       });
       transform.addEventListener("mouseUp", () => {
         if (orbitRef.current) orbitRef.current.enabled = true;
+        emitEvent({ type: "transform-end", object: selectedRef.current, mode: transformModeRef.current });
+      });
+      transform.addEventListener("objectChange", () => {
+        emitEvent({ type: "transform-change", object: selectedRef.current, mode: transformModeRef.current });
       });
 
       const transformObject = transform as unknown as THREE.Object3D & {
@@ -177,7 +199,7 @@ export function EditorCanvas({
       };
 
       if (transformObject.isObject3D ?? true) {
-        scene.add(transformObject);
+        graphScene.add(transformObject);
         transformRef.current = transform;
       } else {
         console.error("TransformControls did not initialize as an Object3D", transform);
@@ -198,11 +220,15 @@ export function EditorCanvas({
           const found = objects.find((o) => o.object3d === hit || o.object3d.children.includes(hit));
           if (found && transformRef.current) {
             setSelectedId(found.id);
+            selectedRef.current = found;
             transformRef.current.attach(found.object3d);
+            emitEvent({ type: "select", object: found });
           }
         } else {
           setSelectedId(null);
           transformRef.current?.detach();
+          selectedRef.current = null;
+          emitEvent({ type: "deselect" });
         }
       };
 
@@ -238,7 +264,7 @@ export function EditorCanvas({
         if (orbitRef.current) {
           orbitRef.current.update();
         }
-        renderer!.render(scene, activeCameraRef.current!);
+        renderer!.render(graphScene, activeCameraRef.current!);
       };
 
       animate();
@@ -256,15 +282,16 @@ export function EditorCanvas({
       }
       if (transformRef.current) {
         const transformObject = transformRef.current as unknown as THREE.Object3D;
-        if (scene && transformObject.parent === scene) {
-          scene.remove(transformObject);
+        if (graphScene && transformObject.parent === graphScene) {
+          graphScene.remove(transformObject);
         }
       }
     };
-  }, [defaultCameraTag, graph, objects]);
+  }, [defaultCameraTag, emitEvent, objects, sceneGraph]);
 
   useEffect(() => {
     if (!transformRef.current) return;
+    transformModeRef.current = transformMode;
     transformRef.current.setMode(transformMode);
   }, [transformMode]);
 
@@ -275,7 +302,7 @@ export function EditorCanvas({
       if (!OrbitCtor) return;
 
       const renderer = rendererRef.current;
-      const taggedCamera = graph.getFirstByTag(tag)?.object3d;
+      const taggedCamera = sceneGraph?.getFirstByTag(tag)?.object3d;
       const cameraCandidate = taggedCamera instanceof THREE.Camera ? taggedCamera : null;
       const camera = cameraCandidate ?? perspectiveCameraRef.current ?? orthographicCameraRef.current;
       if (!camera) return;
@@ -295,7 +322,7 @@ export function EditorCanvas({
         transformRef.current.camera = camera;
       }
     },
-    [graph]
+    [sceneGraph]
   );
 
   const moveCameraToPreset = useCallback((preset: EditorCameraPreset) => {
@@ -308,23 +335,30 @@ export function EditorCanvas({
     camera.lookAt(0, 1, 0);
   }, []);
 
-  const handleSelectFromList = useCallback((id: string) => {
-    setSelectedId(id);
-    const found = objects.find((o) => o.id === id);
-    if (found && transformRef.current) {
-      transformRef.current.attach(found.object3d);
-    }
-  }, [objects]);
+  const handleSelectFromList = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      const found = objects.find((o) => o.id === id);
+      if (found && transformRef.current) {
+        transformRef.current.attach(found.object3d);
+        selectedRef.current = found;
+        emitEvent({ type: "select", object: found });
+      }
+    },
+    [emitEvent, objects]
+  );
 
   const handleSelectByTag = useCallback(
     (tag: string) => {
-      const found = graph.getByTag(tag)[0];
+      const found = sceneGraph?.getByTag(tag)[0];
       if (found && transformRef.current) {
         setSelectedId(found.id);
         transformRef.current.attach(found.object3d);
+        selectedRef.current = found;
+        emitEvent({ type: "select", object: found });
       }
     },
-    [graph]
+    [emitEvent, sceneGraph]
   );
 
   const clearSelection = useCallback(() => {
@@ -332,7 +366,9 @@ export function EditorCanvas({
     if (transformRef.current) {
       transformRef.current.detach();
     }
-  }, []);
+    selectedRef.current = null;
+    emitEvent({ type: "deselect" });
+  }, [emitEvent]);
 
   useEffect(() => {
     const handler = {
@@ -350,6 +386,11 @@ export function EditorCanvas({
 
   return (
     <div className="relative h-full w-full bg-zinc-50">
+      {!sceneGraph && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
+          No scene provided to SceneEditorCanvas.
+        </div>
+      )}
       <div ref={mountRef} className="absolute inset-0" />
       <div className="pointer-events-none absolute left-4 top-4 w-[320px] max-w-[80vw] space-y-3 rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
         <div className="text-base font-semibold text-zinc-900">Three.js Editor</div>
@@ -368,4 +409,4 @@ export function EditorCanvas({
   );
 }
 
-export default EditorCanvas;
+export default SceneEditorCanvas;
