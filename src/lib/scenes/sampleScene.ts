@@ -1,17 +1,25 @@
 import * as THREE from "three";
-import { EditorObject } from "@/lib/scene/types";
+import { SceneGraph, SceneObject } from "@/lib/scene/types";
 
 const defaultCameraPosition = new THREE.Vector3(6, 4, 6);
 const frustumSize = 16;
 
-export type SampleSceneBundle = {
-  scene: THREE.Scene;
-  perspectiveCamera: THREE.PerspectiveCamera;
-  orthographicCamera: THREE.OrthographicCamera;
-  selectableObjects: EditorObject[];
-};
+function buildTagIndex(objects: SceneObject[]) {
+  const index = new Map<string, SceneObject[]>();
+  objects.forEach((obj) => {
+    (obj.tags ?? []).forEach((tag) => {
+      const existing = index.get(tag);
+      if (existing) {
+        existing.push(obj);
+      } else {
+        index.set(tag, [obj]);
+      }
+    });
+  });
+  return index;
+}
 
-export function createSampleScene(): SampleSceneBundle {
+export function createSampleScene(): SceneGraph {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf5f5f5);
 
@@ -76,16 +84,23 @@ export function createSampleScene(): SampleSceneBundle {
 
   scene.add(perspectiveCamera, orthographicCamera, box, sphere, plane);
 
-  const selectableObjects: EditorObject[] = [
-    { id: box.uuid, name: box.name, object3d: box },
-    { id: sphere.uuid, name: sphere.name, object3d: sphere },
-    { id: plane.uuid, name: plane.name, object3d: plane },
+  const objects: SceneObject[] = [
+    { id: perspectiveCamera.uuid, name: perspectiveCamera.name, object3d: perspectiveCamera, tags: ["type:camera", "camera:perspective"] },
+    { id: orthographicCamera.uuid, name: orthographicCamera.name, object3d: orthographicCamera, tags: ["type:camera", "camera:orthographic"] },
+    { id: ambient.uuid, name: ambient.name, object3d: ambient, tags: ["type:light", "light:ambient"] },
+    { id: keyLight.uuid, name: keyLight.name, object3d: keyLight, tags: ["type:light", "light:directional"] },
+    { id: grid.uuid, name: grid.name, object3d: grid, tags: ["type:helper", "helper:grid"] },
+    { id: box.uuid, name: box.name, object3d: box, tags: ["type:mesh", "shape:box"] },
+    { id: sphere.uuid, name: sphere.name, object3d: sphere, tags: ["type:mesh", "shape:sphere"] },
+    { id: plane.uuid, name: plane.name, object3d: plane, tags: ["type:mesh", "shape:plane"] },
   ];
+
+  const tagIndex = buildTagIndex(objects);
 
   return {
     scene,
-    perspectiveCamera,
-    orthographicCamera,
-    selectableObjects,
-  };
+    objects,
+    getByTag: (tag: string) => [...(tagIndex.get(tag) ?? [])],
+    getFirstByTag: (tag: string) => tagIndex.get(tag)?.[0],
+  } satisfies SceneGraph;
 }

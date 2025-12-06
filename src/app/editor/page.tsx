@@ -18,12 +18,7 @@ export default function EditorPage() {
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-zinc-100">
-      <EditorCanvas
-        scene={sample.scene}
-        perspectiveCamera={sample.perspectiveCamera}
-        orthographicCamera={sample.orthographicCamera}
-        selectableObjects={sample.selectableObjects}
-      />
+      <EditorCanvas graph={sample} defaultCameraTag="camera:perspective" selectableObjects={sample.objects.filter((o) => !o.tags?.includes("type:camera"))} />
     </div>
   );
 }

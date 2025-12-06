@@ -1,10 +1,11 @@
-import { EditorCameraType, EditorTransformMode, EditorCameraPreset } from "../scene/types";
+import { EditorTransformMode, EditorCameraPreset } from "../scene/types";
 
 export type EditorCommandHandler = {
-  setCameraType: (type: EditorCameraType) => void;
+  setCameraByTag: (tag: string) => void;
   setTransformMode: (mode: EditorTransformMode) => void;
   moveCameraToPreset: (preset: EditorCameraPreset) => void;
   selectObject: (id: string) => void;
+  selectObjectByTag: (tag: string) => void;
   clearSelection: () => void;
 };
 
@@ -21,8 +22,8 @@ class EditorCommandLibrary {
     }
   }
 
-  setCameraType(type: EditorCameraType) {
-    this.handler?.setCameraType(type);
+  setCameraByTag(tag: string) {
+    this.handler?.setCameraByTag(tag);
   }
 
   setTransformMode(mode: EditorTransformMode) {
@@ -35,6 +36,10 @@ class EditorCommandLibrary {
 
   selectObject(id: string) {
     this.handler?.selectObject(id);
+  }
+
+  selectObjectByTag(tag: string) {
+    this.handler?.selectObjectByTag(tag);
   }
 
   clearSelection() {
