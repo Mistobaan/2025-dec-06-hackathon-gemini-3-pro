@@ -13,7 +13,7 @@ const EditorCanvas = dynamic(() => import("@/components/editor/EditorCanvas"), {
 
 export default function EditorPage() {
   return (
-    <div className="mx-auto max-w-6xl py-8">
+    <div className="h-screen w-screen overflow-hidden bg-zinc-100">
       <EditorCanvas />
     </div>
   );

@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+import {
+  EditorCameraPreset,
+  EditorCameraType,
+  EditorTransformMode,
+} from "@/lib/editor/types";
+import { editorCommands } from "@/lib/editor/commands";
 
-const presets = {
+const presets: Record<EditorCameraPreset, THREE.Vector3> = {
   home: new THREE.Vector3(6, 4, 6),
   front: new THREE.Vector3(0, 0, 10),
   side: new THREE.Vector3(10, 0, 0),
   top: new THREE.Vector3(0, 10, 0),
 };
-
-type CameraType = "perspective" | "orthographic";
-type TransformMode = "translate" | "rotate" | "scale";
 
 type EditorObject = {
   id: string;
@@ -55,11 +58,10 @@ export function EditorCanvas() {
   const activeCameraRef = useRef<THREE.Camera | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
-  const objects = useMemo(buildSampleObjects, []);
+  const objects = useMemo(() => buildSampleObjects(), []);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [transformMode, setTransformMode] = useState<TransformMode>("translate");
-  const [cameraType, setCameraType] = useState<CameraType>("perspective");
+  const [transformMode, setTransformMode] = useState<EditorTransformMode>("translate");
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -124,7 +126,7 @@ export function EditorCanvas() {
     orbitRef.current = orbit;
 
     const transform = new TransformControls(perspectiveCamera, renderer.domElement);
-    transform.setMode(transformMode);
+    transform.setMode("translate");
     transform.addEventListener("mouseDown", () => {
       if (orbitRef.current) orbitRef.current.enabled = false;
     });
@@ -206,14 +208,13 @@ export function EditorCanvas() {
     transformRef.current.setMode(transformMode);
   }, [transformMode]);
 
-  const setActiveCamera = (type: CameraType) => {
+  const setActiveCamera = useCallback((type: EditorCameraType) => {
     if (!rendererRef.current) return;
     const renderer = rendererRef.current;
     const camera =
       type === "orthographic" ? orthographicCameraRef.current : perspectiveCameraRef.current;
     if (!camera) return;
 
-    setCameraType(type);
     activeCameraRef.current = camera;
 
     if (orbitRef.current) {
@@ -228,9 +229,9 @@ export function EditorCanvas() {
     if (transformRef.current) {
       transformRef.current.camera = camera;
     }
-  };
+  }, []);
 
-  const moveCameraToPreset = (preset: keyof typeof presets) => {
+  const moveCameraToPreset = useCallback((preset: EditorCameraPreset) => {
     const camera = activeCameraRef.current;
     if (!camera || !orbitRef.current) return;
 
@@ -238,85 +239,64 @@ export function EditorCanvas() {
     camera.position.copy(target);
     orbitRef.current.target.set(0, 1, 0);
     camera.lookAt(0, 1, 0);
-  };
+  }, []);
 
-  const handleSelectFromList = (id: string) => {
+  const handleSelectFromList = useCallback((id: string) => {
     setSelectedId(id);
     const found = objects.find((o) => o.id === id);
     if (found && transformRef.current) {
       transformRef.current.attach(found.object3d);
     }
-  };
+  }, [objects]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedId(null);
+    if (transformRef.current) {
+      transformRef.current.detach();
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = {
+      setCameraType: setActiveCamera,
+      setTransformMode,
+      moveCameraToPreset,
+      selectObject: handleSelectFromList,
+      clearSelection,
+    };
+
+    editorCommands.register(handler);
+    return () => editorCommands.unregister(handler);
+  }, [clearSelection, handleSelectFromList, moveCameraToPreset, setActiveCamera, setTransformMode]);
 
   return (
-    <div className="flex h-[calc(100vh-120px)] min-h-[600px] flex-col gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-lg">
-      <div className="flex items-center justify-between gap-4 border-b border-zinc-200 pb-3">
-        <div className="flex items-center gap-2 text-lg font-semibold">Three.js Editor</div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-1 text-sm">
-            <span className="text-xs uppercase text-zinc-600">Camera</span>
-            <button
-              className={`rounded px-2 py-1 ${cameraType === "perspective" ? "bg-black text-white" : "text-zinc-700"}`}
-              onClick={() => setActiveCamera("perspective")}
-            >
-              Perspective
-            </button>
-            <button
-              className={`rounded px-2 py-1 ${cameraType === "orthographic" ? "bg-black text-white" : "text-zinc-700"}`}
-              onClick={() => setActiveCamera("orthographic")}
-            >
-              Orthographic
-            </button>
-          </div>
-          <div className="flex items-center gap-2 rounded-full bg-zinc-100 px-3 py-1 text-sm">
-            <span className="text-xs uppercase text-zinc-600">Transform</span>
-            {["translate", "rotate", "scale"].map((mode) => (
-              <button
-                key={mode}
-                className={`rounded px-2 py-1 capitalize ${
-                  transformMode === mode ? "bg-black text-white" : "text-zinc-700"
-                }`}
-                onClick={() => setTransformMode(mode as TransformMode)}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 rounded-full bg-zinc-100 px-3 py-1 text-sm">
-            <span className="text-xs uppercase text-zinc-600">Presets</span>
-            {Object.keys(presets).map((preset) => (
-              <button
-                key={preset}
-                className="rounded px-2 py-1 capitalize text-zinc-700 hover:bg-zinc-200"
-                onClick={() => moveCameraToPreset(preset as keyof typeof presets)}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        </div>
+    <div className="flex h-full flex-col gap-4 p-4">
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+        <div className="text-lg font-semibold text-zinc-900">Three.js Editor</div>
+        <p className="text-sm text-zinc-600">
+          Drive camera modes, presets, and transforms through the programmatic editorCommands API.
+        </p>
       </div>
 
-      <div className="flex flex-1 gap-4">
-        <div className="flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+      <div className="flex flex-1 gap-4 overflow-hidden">
+        <div className="flex-1 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 shadow-inner">
           <div ref={mountRef} className="h-full w-full" />
         </div>
-        <div className="w-72 space-y-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm">
-          <div className="text-sm font-semibold text-zinc-800">Scene Objects</div>
-          <div className="space-y-2 text-sm">
+        <aside className="w-72 space-y-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold text-zinc-900">Scene Overview</div>
+          <ul className="space-y-2 text-sm text-zinc-700">
             {objects.map((entry) => (
-              <button
+              <li
                 key={entry.id}
-                onClick={() => handleSelectFromList(entry.id)}
-                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left ${
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${
                   selectedId === entry.id ? "border-black bg-zinc-100" : "border-zinc-200"
                 }`}
               >
                 <span>{entry.name}</span>
                 {selectedId === entry.id && <span className="text-xs uppercase text-zinc-500">Selected</span>}
-              </button>
+              </li>
             ))}
-          </div>
+          </ul>
           <div className="rounded-lg bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600">
             <p className="font-semibold text-zinc-800">Navigation</p>
             <ul className="list-disc space-y-1 pl-4 pt-1">
@@ -324,9 +304,9 @@ export function EditorCanvas() {
               <li>Pan: right mouse drag</li>
               <li>Zoom: mouse wheel or pinch</li>
             </ul>
-            <p className="pt-2 text-zinc-700">Use the transform controls to move, rotate, and scale the selection.</p>
+            <p className="pt-2 text-zinc-700">Use programmatic commands to change cameras, transforms, and presets.</p>
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   );
