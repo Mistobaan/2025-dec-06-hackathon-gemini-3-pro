@@ -162,8 +162,12 @@ export function EditorCanvas({
         if (orbitRef.current) orbitRef.current.enabled = true;
       });
 
-      if (transform.isObject3D) {
-        scene.add(transform);
+      const transformObject = transform as unknown as THREE.Object3D & {
+        isObject3D?: boolean;
+      };
+
+      if (transformObject.isObject3D ?? true) {
+        scene.add(transformObject);
         transformRef.current = transform;
       } else {
         console.error("TransformControls did not initialize as an Object3D", transform);
@@ -240,8 +244,11 @@ export function EditorCanvas({
       if (rendererRef.current && mount && rendererRef.current.domElement.parentElement === mount) {
         mount.removeChild(rendererRef.current.domElement);
       }
-      if (transformRef.current && transformRef.current.parent === scene) {
-        scene.remove(transformRef.current);
+      if (transformRef.current) {
+        const transformObject = transformRef.current as unknown as THREE.Object3D;
+        if (transformObject.parent === scene) {
+          scene.remove(transformObject);
+        }
       }
     };
   }, [objects, orthographicCamera, perspectiveCamera, scene]);
