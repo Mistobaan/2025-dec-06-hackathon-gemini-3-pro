@@ -172,6 +172,19 @@ const SceneEditorCanvas = forwardRef<SceneEditorHandle, SceneEditorCanvasProps>(
     }, []);
 
     const transformHelperRef = useRef<THREE.Object3D | null>(null);
+    const getAuxiliaryObjects = useCallback((): THREE.Object3D[] => {
+      const auxiliary: THREE.Object3D[] = [];
+      sceneGraph?.objects.forEach((entry) => {
+        const tags = entry.tags ?? [];
+        if (tags.some((tag) => tag.startsWith("type:helper") || tag.startsWith("helper:"))) {
+          auxiliary.push(entry.object3d);
+        }
+      });
+      if (transformHelperRef.current) {
+        auxiliary.push(transformHelperRef.current);
+      }
+      return auxiliary;
+    }, [sceneGraph]);
 
     useEffect(() => {
       const mount = mountRef.current;
@@ -500,12 +513,25 @@ const SceneEditorCanvas = forwardRef<SceneEditorHandle, SceneEditorCanvasProps>(
       const camera = activeCameraRef.current;
       const graphScene = sceneGraph?.scene;
       if (!renderer || !camera || !graphScene) return null;
-      renderer.render(graphScene, camera);
-      const dataUrl = renderer.domElement.toDataURL("image/png");
-      const cameraState = readCameraState();
-      if (!cameraState) return null;
-      return { dataUrl, camera: cameraState };
-    }, [readCameraState, sceneGraph]);
+
+      const auxiliary = getAuxiliaryObjects();
+      const previousVisibility = auxiliary.map((object) => object.visible);
+
+      try {
+        auxiliary.forEach((object) => {
+          object.visible = false;
+        });
+        renderer.render(graphScene, camera);
+        const dataUrl = renderer.domElement.toDataURL("image/png");
+        const cameraState = readCameraState();
+        if (!cameraState) return null;
+        return { dataUrl, camera: cameraState };
+      } finally {
+        auxiliary.forEach((object, index) => {
+          object.visible = previousVisibility[index];
+        });
+      }
+    }, [getAuxiliaryObjects, readCameraState, sceneGraph]);
 
     const handleSelectFromList = useCallback(
       (id: string) => {
@@ -581,7 +607,7 @@ const SceneEditorCanvas = forwardRef<SceneEditorHandle, SceneEditorCanvasProps>(
           </div>
         )}
         <div ref={mountRef} className="absolute inset-0" />
-        <div className="pointer-events-none absolute left-4 top-4 w-[320px] max-w-[80vw] space-y-3 rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
+        {/* <div className="pointer-events-none absolute left-4 top-4 w-[320px] max-w-[80vw] space-y-3 rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
           <div className="text-base font-semibold text-zinc-900">
             Three.js Editor
           </div>
@@ -592,7 +618,8 @@ const SceneEditorCanvas = forwardRef<SceneEditorHandle, SceneEditorCanvasProps>(
             programmatically. The viewport supports orbit (left drag), pan
             (right drag), and zoom (wheel or pinch).
           </p>
-        </div>
+        </div> 
+          */}
         {selectedId && (
           <div className="pointer-events-none absolute right-4 top-4 rounded-full bg-black/70 px-4 py-2 text-xs font-medium uppercase tracking-wide text-white shadow-lg">
             Selected:{" "}

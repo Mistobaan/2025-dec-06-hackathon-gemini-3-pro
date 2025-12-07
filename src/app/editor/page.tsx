@@ -75,6 +75,10 @@ export default function EditorPage() {
     []
   );
 
+  const handleApplyFrame = useCallback((frame: TimelineFrame) => {
+    editorRef.current?.setCameraState(frame.camera);
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     setError(null);
     if (!frames.start || !frames.end) {
@@ -147,8 +151,8 @@ export default function EditorPage() {
 
         <div className="flex-1 space-y-3 overflow-y-auto pr-1">
           <div className="grid grid-cols-1 gap-3">
-            <TimelineFrameCard slot="start" frame={frames.start} onCapture={() => handleCapture("start")} />
-            <TimelineFrameCard slot="end" frame={frames.end} onCapture={() => handleCapture("end")} />
+            <TimelineFrameCard slot="start" frame={frames.start} onCapture={() => handleCapture("start")} onApply={handleApplyFrame} />
+            <TimelineFrameCard slot="end" frame={frames.end} onCapture={() => handleCapture("end")} onApply={handleApplyFrame} />
           </div>
 
           <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3">

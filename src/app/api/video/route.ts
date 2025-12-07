@@ -59,18 +59,16 @@ export async function POST(req: Request) {
   const predictPayload = {
     instances: [
       {
-        prompt: promptText,
-        images: [
-          {
-            bytesBase64Encoded: startFrame.data,
-            mimeType: startFrame.mimeType,
-          },
-          {
-            bytesBase64Encoded: endFrame.data,
-            mimeType: endFrame.mimeType,
-          },
-        ],
-      },
+        'prompt': promptText,
+        'image': {
+          bytesBase64Encoded: startFrame.data,
+          mimeType: startFrame.mimeType,
+        },
+        'lastFrame': {
+          bytesBase64Encoded: endFrame.data,
+          mimeType: endFrame.mimeType,
+        },
+      }
     ],
     parameters: {
       aspectRatio: "16:9",
@@ -128,7 +126,7 @@ export async function POST(req: Request) {
     let pollResponse: any = null;
     let polls = 0;
 
-    for (;;) {
+    for (; ;) {
       if (Date.now() - startTime > timeoutMs) {
         throw new Error("Video generation timed out");
       }
