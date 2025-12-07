@@ -6,6 +6,10 @@ import { GroundedSkybox } from "three/examples/jsm/objects/GroundedSkybox.js";
 import { EditorCameraPreset, EditorTransformMode, SceneGraph, SceneObject } from "@/lib/scene/types";
 import { editorCommands } from "@/lib/editor/commands";
 import { SceneEditorEvent, sceneEditorEvents } from "@/lib/editor/events";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 import type { OrbitControls } from "@/lib/editor/controls/OrbitControls.js";
 import type { TransformControls } from "@/lib/editor/controls/TransformControls.js";
@@ -93,6 +97,10 @@ export function SceneEditorCanvas({
   const [skyboxResolution, setSkyboxResolution] = useState<number>(sceneGraph?.skybox?.resolution ?? 32);
   const [skyboxLoading, setSkyboxLoading] = useState(false);
   const [localSkyboxes, setLocalSkyboxes] = useState<Array<{ label: string; textureUrl: string }>>([]);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showBounds, setShowBounds] = useState(true);
+  const [exposure, setExposure] = useState(1);
+  const [backgroundColor, setBackgroundColor] = useState("#f5f5f5");
 
   const cameras = useMemo<SceneObject[]>(() => {
     if (!sceneGraph?.objects) return [];
@@ -160,6 +168,15 @@ export function SceneEditorCanvas({
     setSkyboxHeight(sceneGraph?.skybox?.height ?? 15);
     setSkyboxRadius(sceneGraph?.skybox?.radius ?? 100);
     setSkyboxResolution(sceneGraph?.skybox?.resolution ?? 32);
+    const grid = sceneGraph?.getFirstByTag("helper:grid");
+    if (grid) {
+      setShowGrid(grid.object3d.visible);
+    }
+
+    const bg = sceneGraph?.scene.background;
+    if (bg instanceof THREE.Color) {
+      setBackgroundColor(`#${bg.getHexString()}`);
+    }
   }, [sceneGraph]);
 
   useEffect(() => {
@@ -266,6 +283,28 @@ export function SceneEditorCanvas({
   }, [loadSkyboxFromUrl, skyboxUrl]);
 
   useEffect(() => {
+    const grid = sceneGraph?.getFirstByTag("helper:grid");
+    if (grid) {
+      grid.object3d.visible = showGrid;
+    }
+  }, [sceneGraph, showGrid]);
+
+  useEffect(() => {
+    const scene = sceneGraph?.scene;
+    if (scene && scene.background instanceof THREE.Color) {
+      scene.background.set(backgroundColor);
+    }
+  }, [backgroundColor, sceneGraph]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (renderer) {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = exposure;
+    }
+  }, [exposure]);
+
+  useEffect(() => {
     if (!activeSkyboxTextureRef.current) return;
     rebuildSkybox(activeSkyboxTextureRef.current, {
       height: skyboxHeight,
@@ -288,6 +327,7 @@ export function SceneEditorCanvas({
     characters.forEach((character) => {
       const helper = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(character.bounds?.color ?? 0x22c55e));
       helper.name = `${character.name} Bounds`;
+      helper.visible = showBounds;
       graphScene.add(helper);
       helpers.set(character.id, helper);
     });
@@ -296,7 +336,13 @@ export function SceneEditorCanvas({
       helpers.forEach((helper) => graphScene.remove(helper));
       helpers.clear();
     };
-  }, [objects, sceneGraph]);
+  }, [objects, sceneGraph, showBounds]);
+
+  useEffect(() => {
+    boundingHelpersRef.current.forEach((helper) => {
+      helper.visible = showBounds;
+    });
+  }, [showBounds]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -355,6 +401,8 @@ export function SceneEditorCanvas({
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setSize(mount.clientWidth, mount.clientHeight);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = exposure;
       renderer.shadowMap.enabled = true;
       mount.appendChild(renderer.domElement);
       rendererRef.current = renderer;
@@ -589,87 +637,158 @@ export function SceneEditorCanvas({
         </div>
       )}
       <div ref={mountRef} className="absolute inset-0" />
-      <div className="pointer-events-none absolute left-4 top-4 flex w-[360px] max-w-[80vw] flex-col space-y-3">
-        <div className="pointer-events-auto rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
-          <div className="text-base font-semibold text-zinc-900">Three.js Editor</div>
-          <p className="leading-relaxed text-zinc-700">
-            Use the <code className="rounded bg-zinc-100 px-1">editorCommands</code> API to drive camera modes, presets,
-            transforms, and selection programmatically. The viewport supports orbit (left drag), pan (right drag), and
-            zoom (wheel or pinch).
-          </p>
-        </div>
-        <div className="pointer-events-auto space-y-3 rounded-xl bg-white/90 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
-          <div className="flex items-center justify-between">
-            <div className="text-base font-semibold text-zinc-900">Skybox</div>
-            {skyboxLoading && <span className="text-[11px] font-semibold text-amber-600">Loading…</span>}
-          </div>
-          <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Texture
-            <select
-              className="w-full rounded border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-800 shadow-sm focus:border-sky-400 focus:outline-none"
-              value={skyboxUrl ?? ""}
-              onChange={(event) => setSkyboxUrl(event.target.value || null)}
-            >
-              <option value="">None</option>
-              {availableSkyboxes.map((option) => (
-                <option key={option.textureUrl} value={option.textureUrl}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="space-y-2 text-xs text-zinc-600">
-            <div className="flex items-center gap-2">
-              <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Height</span>
-              <input
-                type="range"
-                min={5}
-                max={60}
-                step={1}
-                value={skyboxHeight}
-                onChange={(e) => setSkyboxHeight(Number(e.target.value))}
-                className="h-2 w-full cursor-pointer accent-sky-500"
-              />
-              <span className="w-10 text-right font-mono text-[12px] text-zinc-700">{skyboxHeight.toFixed(0)}</span>
+      <div className="pointer-events-none absolute left-4 top-4 flex w-[400px] max-w-[84vw] flex-col space-y-3">
+        <Card className="pointer-events-auto border border-zinc-200/80 bg-white/90 shadow-sm backdrop-blur">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Scene Controls</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              Use <code className="rounded bg-zinc-100 px-1">editorCommands</code> to drive camera modes, presets,
+              transforms, and selection programmatically. The viewport supports orbit (left drag), pan (right drag), and
+              zoom (wheel or pinch).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-zinc-800">
+            <div className="rounded-lg border border-zinc-200/80 bg-white/70 p-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[13px] font-semibold text-zinc-900">Scene settings</div>
+                  <p className="text-[12px] text-zinc-600">Configure helpers and exposure on the left rail.</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2 rounded-md border border-zinc-200/70 px-3 py-2">
+                  <div>
+                    <div className="text-[13px] font-semibold text-zinc-900">Grid helper</div>
+                    <p className="text-[12px] text-zinc-600">Toggle the reference floor grid.</p>
+                  </div>
+                  <Checkbox checked={showGrid} onCheckedChange={(checked) => setShowGrid(checked === true)} />
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-md border border-zinc-200/70 px-3 py-2">
+                  <div>
+                    <div className="text-[13px] font-semibold text-zinc-900">Character bounds</div>
+                    <p className="text-[12px] text-zinc-600">Show live bounding boxes for tagged characters.</p>
+                  </div>
+                  <Checkbox checked={showBounds} onCheckedChange={(checked) => setShowBounds(checked === true)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-600" htmlFor="exposure">
+                    Exposure
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="exposure"
+                      type="range"
+                      min={0.1}
+                      max={2}
+                      step={0.05}
+                      value={exposure}
+                      onChange={(e) => setExposure(Number(e.target.value))}
+                      className="h-2 w-full cursor-pointer accent-sky-500"
+                    />
+                    <span className="w-12 text-right font-mono text-[12px] text-zinc-700">{exposure.toFixed(2)}</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-600" htmlFor="background">
+                    Background
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id="background"
+                      type="color"
+                      value={backgroundColor}
+                      onChange={(event) => setBackgroundColor(event.target.value)}
+                      className="h-10 w-16 cursor-pointer border border-zinc-200 p-1"
+                    />
+                    <div className="flex-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[12px] text-zinc-700">
+                      {backgroundColor}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Radius</span>
-              <input
-                type="range"
-                min={20}
-                max={200}
-                step={5}
-                value={skyboxRadius}
-                onChange={(e) => setSkyboxRadius(Number(e.target.value))}
-                className="h-2 w-full cursor-pointer accent-sky-500"
-              />
-              <span className="w-10 text-right font-mono text-[12px] text-zinc-700">{skyboxRadius.toFixed(0)}</span>
+          </CardContent>
+        </Card>
+        <Card className="pointer-events-auto border border-zinc-200/80 bg-white/90 shadow-sm backdrop-blur">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Skybox</CardTitle>
+              {skyboxLoading && <span className="text-[11px] font-semibold text-amber-600">Loading…</span>}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Resolution</span>
+            <CardDescription className="text-xs text-zinc-600">
+              Swap PNGs from <code className="rounded bg-zinc-100 px-1">/public/assets/skyboxes</code> or remote URLs, and
+              tweak grounded parameters.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-zinc-800">
+            <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Texture
               <select
-                className="flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-sm text-zinc-800 focus:border-sky-400 focus:outline-none"
-                value={skyboxResolution}
-                onChange={(e) => setSkyboxResolution(Number(e.target.value))}
+                className="w-full rounded border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-800 shadow-sm focus:border-sky-400 focus:outline-none"
+                value={skyboxUrl ?? ""}
+                onChange={(event) => setSkyboxUrl(event.target.value || null)}
               >
-                {[16, 32, 64, 96].map((res) => (
-                  <option value={res} key={res}>
-                    {res}
+                <option value="">None</option>
+                {availableSkyboxes.map((option) => (
+                  <option key={option.textureUrl} value={option.textureUrl}>
+                    {option.label}
                   </option>
                 ))}
               </select>
+            </label>
+            <div className="space-y-2 text-xs text-zinc-600">
+              <div className="flex items-center gap-2">
+                <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Height</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={60}
+                  step={1}
+                  value={skyboxHeight}
+                  onChange={(e) => setSkyboxHeight(Number(e.target.value))}
+                  className="h-2 w-full cursor-pointer accent-sky-500"
+                />
+                <span className="w-10 text-right font-mono text-[12px] text-zinc-700">{skyboxHeight.toFixed(0)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Radius</span>
+                <input
+                  type="range"
+                  min={20}
+                  max={200}
+                  step={5}
+                  value={skyboxRadius}
+                  onChange={(e) => setSkyboxRadius(Number(e.target.value))}
+                  className="h-2 w-full cursor-pointer accent-sky-500"
+                />
+                <span className="w-10 text-right font-mono text-[12px] text-zinc-700">{skyboxRadius.toFixed(0)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Resolution</span>
+                <select
+                  className="flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-sm text-zinc-800 focus:border-sky-400 focus:outline-none"
+                  value={skyboxResolution}
+                  onChange={(e) => setSkyboxResolution(Number(e.target.value))}
+                >
+                  {[16, 32, 64, 96].map((res) => (
+                    <option value={res} key={res}>
+                      {res}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
-          <div className="rounded-md bg-emerald-50 p-2 text-[11px] text-emerald-800">
-            Character objects tagged with <code className="rounded bg-emerald-100 px-1">type:character</code> render
-            live bounding boxes for collision and layout checks.
-          </div>
-          <p className="text-[11px] leading-relaxed text-zinc-600">
-            Skybox controls honor the Gemini panoramic prompt recipe and list any PNGs you drop under
-            <code className="rounded bg-zinc-100 px-1">/public/assets/skyboxes</code> automatically (files are not
-            stored in the repo).
-          </p>
-        </div>
+            <div className="rounded-md bg-emerald-50 p-2 text-[11px] text-emerald-800">
+              Character objects tagged with <code className="rounded bg-emerald-100 px-1">type:character</code> render
+              live bounding boxes for collision and layout checks.
+            </div>
+            <p className="text-[11px] leading-relaxed text-zinc-600">
+              Skybox controls honor the Gemini panoramic prompt recipe and list any PNGs you drop under
+              <code className="rounded bg-zinc-100 px-1">/public/assets/skyboxes</code> automatically (files are not
+              stored in the repo).
+            </p>
+          </CardContent>
+        </Card>
       </div>
       {selectedId && (
         <div className="pointer-events-none absolute right-4 top-4 rounded-full bg-black/70 px-4 py-2 text-xs font-medium uppercase tracking-wide text-white shadow-lg">
