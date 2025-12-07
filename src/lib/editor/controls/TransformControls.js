@@ -54,8 +54,8 @@ class TransformControls extends Controls {
 		this._plane = plane;
 		root.add( plane );
 
-                // eslint-disable-next-line @typescript-eslint/no-this-alias
-                const scope = this;
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
+		const scope = this;
 
 		// Defined getter, setter and store for a property
 		function defineProperty( propName, defaultValue ) {
