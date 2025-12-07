@@ -10,6 +10,12 @@ export type SceneObject = {
   tags?: string[];
 };
 
+export type SceneCameraState = {
+  position: [number, number, number];
+  target: [number, number, number];
+  up: [number, number, number];
+};
+
 export type SceneGraph = {
   scene: THREE.Scene;
   objects: SceneObject[];
