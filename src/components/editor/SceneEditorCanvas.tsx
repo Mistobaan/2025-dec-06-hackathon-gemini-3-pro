@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { GroundedSkybox } from "three/examples/jsm/objects/GroundedSkybox.js";
 import { EditorCameraPreset, EditorTransformMode, SceneGraph, SceneObject } from "@/lib/scene/types";
 import { editorCommands } from "@/lib/editor/commands";
 import { SceneEditorEvent, sceneEditorEvents } from "@/lib/editor/events";
@@ -57,6 +58,10 @@ export function SceneEditorCanvas({
   const transformModeRef = useRef<EditorTransformMode>("translate");
   const orbitRef = useRef<OrbitControls | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
+  const groundedSkyboxRef = useRef<THREE.Object3D | null>(null);
+  const activeSkyboxTextureRef = useRef<THREE.Texture | null>(null);
+  const boundingHelpersRef = useRef<Map<string, THREE.Box3Helper>>(new Map());
+  const objectIndexRef = useRef<Map<string, SceneObject>>(new Map());
   const orthoFrustumHeights = useRef<WeakMap<THREE.Camera, number>>(new WeakMap());
   const controlConstructors = useRef<{
     OrbitControls: OrbitControlsCtor | null;
@@ -66,6 +71,8 @@ export function SceneEditorCanvas({
     TransformControls: null,
   });
   const sceneGraph = scene ?? null;
+  const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
+  const textureCache = useMemo(() => new Map<string, THREE.Texture>(), []);
 
   const objects = useMemo<SceneObject[]>(() => {
     if (!sceneGraph?.objects) return [];
@@ -80,11 +87,30 @@ export function SceneEditorCanvas({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<EditorTransformMode>("translate");
+  const [skyboxUrl, setSkyboxUrl] = useState<string | null>(sceneGraph?.skybox?.textureUrl ?? null);
+  const [skyboxHeight, setSkyboxHeight] = useState<number>(sceneGraph?.skybox?.height ?? 15);
+  const [skyboxRadius, setSkyboxRadius] = useState<number>(sceneGraph?.skybox?.radius ?? 100);
+  const [skyboxResolution, setSkyboxResolution] = useState<number>(sceneGraph?.skybox?.resolution ?? 32);
+  const [skyboxLoading, setSkyboxLoading] = useState(false);
+  const [localSkyboxes, setLocalSkyboxes] = useState<Array<{ label: string; textureUrl: string }>>([]);
 
   const cameras = useMemo<SceneObject[]>(() => {
     if (!sceneGraph?.objects) return [];
     return sceneGraph.objects.filter((child) => isCameraObject(child.object3d));
   }, [sceneGraph]);
+
+  const availableSkyboxes = useMemo(() => {
+    const fromScene = sceneGraph?.skybox?.availableTextures ?? [];
+    const merged = [...fromScene];
+
+    localSkyboxes.forEach((option) => {
+      if (!merged.some((existing) => existing.textureUrl === option.textureUrl)) {
+        merged.push(option);
+      }
+    });
+
+    return merged;
+  }, [localSkyboxes, sceneGraph]);
 
   const emitEvent = useCallback(
     (event: SceneEditorEvent) => {
@@ -93,6 +119,12 @@ export function SceneEditorCanvas({
     },
     [onEvent]
   );
+
+  useEffect(() => {
+    const nextIndex = new Map<string, SceneObject>();
+    objects.forEach((obj) => nextIndex.set(obj.id, obj));
+    objectIndexRef.current = nextIndex;
+  }, [objects]);
 
   const configureCameraForViewport = useCallback(
     (camera: THREE.Camera) => {
@@ -122,6 +154,149 @@ export function SceneEditorCanvas({
     },
     []
   );
+
+  useEffect(() => {
+    setSkyboxUrl(sceneGraph?.skybox?.textureUrl ?? null);
+    setSkyboxHeight(sceneGraph?.skybox?.height ?? 15);
+    setSkyboxRadius(sceneGraph?.skybox?.radius ?? 100);
+    setSkyboxResolution(sceneGraph?.skybox?.resolution ?? 32);
+  }, [sceneGraph]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLocalSkyboxes = async () => {
+      try {
+        const response = await fetch("/api/skyboxes");
+        if (!response.ok) return;
+
+        const data = (await response.json()) as { skyboxes?: Array<{ label: string; textureUrl: string }> };
+        if (!cancelled && Array.isArray(data.skyboxes)) {
+          setLocalSkyboxes(data.skyboxes);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to list local skyboxes", error);
+          setLocalSkyboxes([]);
+        }
+      }
+    };
+
+    loadLocalSkyboxes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const disposeGroundedSkybox = useCallback(() => {
+    const graphScene = sceneGraph?.scene;
+    const grounded = groundedSkyboxRef.current as THREE.Mesh | null;
+    if (graphScene && grounded) {
+      graphScene.remove(grounded);
+    }
+
+    if (grounded) {
+      const material = (grounded as unknown as { material?: THREE.Material | THREE.Material[] }).material;
+      if (Array.isArray(material)) {
+        material.forEach((mat) => mat.dispose());
+      } else {
+        material?.dispose();
+      }
+      (grounded as unknown as { geometry?: THREE.BufferGeometry }).geometry?.dispose?.();
+    }
+
+    groundedSkyboxRef.current = null;
+  }, [sceneGraph]);
+
+  const rebuildSkybox = useCallback(
+    (texture: THREE.Texture, overrides?: { height?: number; radius?: number }) => {
+      const graphScene = sceneGraph?.scene;
+      if (!graphScene) return;
+
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      graphScene.environment = texture;
+      activeSkyboxTextureRef.current = texture;
+
+      disposeGroundedSkybox();
+
+      const height = overrides?.height ?? skyboxHeight;
+      const radius = overrides?.radius ?? skyboxRadius;
+      const resolution = skyboxResolution || 32;
+      const grounded = new GroundedSkybox(texture, height, radius, resolution);
+      grounded.position.y = height - 0.01;
+      graphScene.add(grounded);
+      groundedSkyboxRef.current = grounded;
+    },
+    [disposeGroundedSkybox, sceneGraph, skyboxHeight, skyboxRadius, skyboxResolution]
+  );
+
+  const loadSkyboxFromUrl = useCallback(
+    (url: string | null) => {
+      if (!url) return;
+
+      const cached = textureCache.get(url);
+      setSkyboxLoading(true);
+
+      if (cached) {
+        rebuildSkybox(cached);
+        setSkyboxLoading(false);
+        return;
+      }
+
+      textureLoader.load(
+        url,
+        (texture) => {
+          textureCache.set(url, texture);
+          rebuildSkybox(texture);
+          setSkyboxLoading(false);
+        },
+        undefined,
+        () => {
+          setSkyboxLoading(false);
+        }
+      );
+    },
+    [rebuildSkybox, textureCache, textureLoader]
+  );
+
+  useEffect(() => {
+    loadSkyboxFromUrl(skyboxUrl);
+  }, [loadSkyboxFromUrl, skyboxUrl]);
+
+  useEffect(() => {
+    if (!activeSkyboxTextureRef.current) return;
+    rebuildSkybox(activeSkyboxTextureRef.current, {
+      height: skyboxHeight,
+      radius: skyboxRadius,
+    });
+  }, [rebuildSkybox, skyboxHeight, skyboxRadius, skyboxResolution]);
+
+  useEffect(() => {
+    const graphScene = sceneGraph?.scene;
+    if (!graphScene) return;
+
+    const helpers = boundingHelpersRef.current;
+    helpers.forEach((helper) => graphScene.remove(helper));
+    helpers.clear();
+
+    const characters = objects.filter(
+      (obj) => obj.tags?.includes("type:character") || Boolean(obj.bounds)
+    );
+
+    characters.forEach((character) => {
+      const helper = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(character.bounds?.color ?? 0x22c55e));
+      helper.name = `${character.name} Bounds`;
+      graphScene.add(helper);
+      helpers.set(character.id, helper);
+    });
+
+    return () => {
+      helpers.forEach((helper) => graphScene.remove(helper));
+      helpers.clear();
+    };
+  }, [objects, sceneGraph]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -269,12 +444,21 @@ export function SceneEditorCanvas({
       window.addEventListener("resize", handleResize);
       cleanupListeners.push(() => window.removeEventListener("resize", handleResize));
 
+      const workingBox = new THREE.Box3();
       const animate = () => {
         if (cancelled) return;
         requestAnimationFrame(animate);
         if (orbitRef.current) {
           orbitRef.current.update();
         }
+        boundingHelpersRef.current.forEach((helper, objectId) => {
+          const target = objectIndexRef.current.get(objectId);
+          if (!target) return;
+          workingBox.setFromObject(target.object3d);
+          workingBox.expandByScalar(target.bounds?.padding ?? 0.1);
+          helper.box.copy(workingBox);
+          helper.updateMatrixWorld(true);
+        });
         renderer!.render(graphScene, activeCameraRef.current!);
       };
 
@@ -297,8 +481,9 @@ export function SceneEditorCanvas({
           graphScene.remove(transformObject);
         }
       }
+      disposeGroundedSkybox();
     };
-  }, [cameras, configureCameraForViewport, defaultCameraTag, emitEvent, objects, sceneGraph]);
+  }, [cameras, configureCameraForViewport, defaultCameraTag, disposeGroundedSkybox, emitEvent, objects, sceneGraph]);
 
   useEffect(() => {
     if (!transformRef.current) return;
@@ -404,13 +589,87 @@ export function SceneEditorCanvas({
         </div>
       )}
       <div ref={mountRef} className="absolute inset-0" />
-      <div className="pointer-events-none absolute left-4 top-4 w-[320px] max-w-[80vw] space-y-3 rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
-        <div className="text-base font-semibold text-zinc-900">Three.js Editor</div>
-        <p className="leading-relaxed text-zinc-700">
-          Use the <code className="rounded bg-zinc-100 px-1">editorCommands</code> API to drive camera modes, presets,
-          transforms, and selection programmatically. The viewport supports orbit (left drag), pan (right drag), and
-          zoom (wheel or pinch).
-        </p>
+      <div className="pointer-events-none absolute left-4 top-4 flex w-[360px] max-w-[80vw] flex-col space-y-3">
+        <div className="pointer-events-auto rounded-xl bg-white/80 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
+          <div className="text-base font-semibold text-zinc-900">Three.js Editor</div>
+          <p className="leading-relaxed text-zinc-700">
+            Use the <code className="rounded bg-zinc-100 px-1">editorCommands</code> API to drive camera modes, presets,
+            transforms, and selection programmatically. The viewport supports orbit (left drag), pan (right drag), and
+            zoom (wheel or pinch).
+          </p>
+        </div>
+        <div className="pointer-events-auto space-y-3 rounded-xl bg-white/90 p-4 text-sm text-zinc-800 shadow-md backdrop-blur">
+          <div className="flex items-center justify-between">
+            <div className="text-base font-semibold text-zinc-900">Skybox</div>
+            {skyboxLoading && <span className="text-[11px] font-semibold text-amber-600">Loading…</span>}
+          </div>
+          <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Texture
+            <select
+              className="w-full rounded border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-800 shadow-sm focus:border-sky-400 focus:outline-none"
+              value={skyboxUrl ?? ""}
+              onChange={(event) => setSkyboxUrl(event.target.value || null)}
+            >
+              <option value="">None</option>
+              {availableSkyboxes.map((option) => (
+                <option key={option.textureUrl} value={option.textureUrl}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="space-y-2 text-xs text-zinc-600">
+            <div className="flex items-center gap-2">
+              <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Height</span>
+              <input
+                type="range"
+                min={5}
+                max={60}
+                step={1}
+                value={skyboxHeight}
+                onChange={(e) => setSkyboxHeight(Number(e.target.value))}
+                className="h-2 w-full cursor-pointer accent-sky-500"
+              />
+              <span className="w-10 text-right font-mono text-[12px] text-zinc-700">{skyboxHeight.toFixed(0)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Radius</span>
+              <input
+                type="range"
+                min={20}
+                max={200}
+                step={5}
+                value={skyboxRadius}
+                onChange={(e) => setSkyboxRadius(Number(e.target.value))}
+                className="h-2 w-full cursor-pointer accent-sky-500"
+              />
+              <span className="w-10 text-right font-mono text-[12px] text-zinc-700">{skyboxRadius.toFixed(0)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-16 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Resolution</span>
+              <select
+                className="flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-sm text-zinc-800 focus:border-sky-400 focus:outline-none"
+                value={skyboxResolution}
+                onChange={(e) => setSkyboxResolution(Number(e.target.value))}
+              >
+                {[16, 32, 64, 96].map((res) => (
+                  <option value={res} key={res}>
+                    {res}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="rounded-md bg-emerald-50 p-2 text-[11px] text-emerald-800">
+            Character objects tagged with <code className="rounded bg-emerald-100 px-1">type:character</code> render
+            live bounding boxes for collision and layout checks.
+          </div>
+          <p className="text-[11px] leading-relaxed text-zinc-600">
+            Skybox controls honor the Gemini panoramic prompt recipe and list any PNGs you drop under
+            <code className="rounded bg-zinc-100 px-1">/public/assets/skyboxes</code> automatically (files are not
+            stored in the repo).
+          </p>
+        </div>
       </div>
       {selectedId && (
         <div className="pointer-events-none absolute right-4 top-4 rounded-full bg-black/70 px-4 py-2 text-xs font-medium uppercase tracking-wide text-white shadow-lg">

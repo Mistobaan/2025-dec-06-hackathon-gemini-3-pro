@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { SceneGraph, SceneObject } from "@/lib/scene/types";
+import { SceneGraph, SceneObject, SceneSkybox } from "@/lib/scene/types";
+import { getRecommendedSkyboxSettings } from "@/lib/scene/skyboxGenerator";
 
 const defaultCameraPosition = new THREE.Vector3(6, 4, 6);
 const frustumSize = 16;
@@ -22,6 +23,18 @@ function buildTagIndex(objects: SceneObject[]) {
 export function createSampleScene(): SceneGraph {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf5f5f5);
+
+  const recommended = getRecommendedSkyboxSettings("general");
+  const fallbackTexture = "https://threejs.org/examples/textures/2294472375_24a3b8ef46_o.jpg";
+  const skybox: SceneSkybox = {
+    type: "general",
+    textureUrl: fallbackTexture,
+    height: recommended.height,
+    radius: recommended.radius,
+    resolution: 64,
+    aspectRatio: "16:9",
+    availableTextures: [{ label: "Demo: Three.js Atrium", textureUrl: fallbackTexture }],
+  };
 
   const perspectiveCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
   perspectiveCamera.name = "PerspectiveCamera";
@@ -82,7 +95,21 @@ export function createSampleScene(): SceneGraph {
   sphere.castShadow = true;
   sphere.receiveShadow = true;
 
-  scene.add(perspectiveCamera, orthographicCamera, box, sphere, plane);
+  const characterA = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.6, 1.2, 12, 24),
+    new THREE.MeshStandardMaterial({ color: 0x22c55e, metalness: 0.1, roughness: 0.6 })
+  );
+  characterA.name = "Character: Scout";
+  characterA.position.set(-1, 1.1, -3);
+
+  const characterB = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.5, 1.0, 12, 16),
+    new THREE.MeshStandardMaterial({ color: 0xf97316, metalness: 0.2, roughness: 0.5 })
+  );
+  characterB.name = "Character: Pilot";
+  characterB.position.set(3, 1.05, -2);
+
+  scene.add(perspectiveCamera, orthographicCamera, box, sphere, plane, characterA, characterB);
 
   const objects: SceneObject[] = [
     { id: perspectiveCamera.uuid, name: perspectiveCamera.name, object3d: perspectiveCamera, tags: ["type:camera", "camera:perspective"] },
@@ -93,6 +120,20 @@ export function createSampleScene(): SceneGraph {
     { id: box.uuid, name: box.name, object3d: box, tags: ["type:mesh", "shape:box"] },
     { id: sphere.uuid, name: sphere.name, object3d: sphere, tags: ["type:mesh", "shape:sphere"] },
     { id: plane.uuid, name: plane.name, object3d: plane, tags: ["type:mesh", "shape:plane"] },
+    {
+      id: characterA.uuid,
+      name: characterA.name,
+      object3d: characterA,
+      tags: ["type:character", "character:scout"],
+      bounds: { color: 0x22c55e, padding: 0.15 },
+    },
+    {
+      id: characterB.uuid,
+      name: characterB.name,
+      object3d: characterB,
+      tags: ["type:character", "character:pilot"],
+      bounds: { color: 0xf97316, padding: 0.15 },
+    },
   ];
 
   const tagIndex = buildTagIndex(objects);
@@ -100,6 +141,7 @@ export function createSampleScene(): SceneGraph {
   return {
     scene,
     objects,
+    skybox,
     getByTag: (tag: string) => [...(tagIndex.get(tag) ?? [])],
     getFirstByTag: (tag: string) => tagIndex.get(tag)?.[0],
   } satisfies SceneGraph;
